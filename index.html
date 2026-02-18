@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SM Check-In (Sheets DB)</title>
+    
+    <link rel="icon" type="image/png" href="./fav.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="./fav.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f7f9fb; }
+        #reader { width: 100%; max-width: 400px; margin: 20px auto; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1); }
+        .modal { transition: opacity 0.3s ease-in-out; }
+        .hidden-section { display: none; }
+    </style>
+    <!-- QR Library -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+</head>
+<body class="p-4 md:p-8 min-h-screen">
+
+    <!-- === AUTH SECTION === -->
+    <div id="auth-section" class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-2xl">
+        <h1 class="text-3xl font-bold text-center text-indigo-700 mb-6">Staff Access</h1>
+        
+        <div id="login-form">
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700">Full Name</label>
+                <input type="text" id="auth-name" class="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500" placeholder="e.g. John Doe">
+            </div>
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700">Phone Number</label>
+                <input type="text" 
+                       id="auth-id" 
+                       inputmode="numeric"
+                       oninput="this.value = this.value.replace(/[^0-9]/g, '')"
+                       class="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500" 
+                       placeholder="e.g. 0123456789">
+                <p class="text-[10px] text-gray-400 mt-1">* Digits only, no spaces or letters allowed.</p>
+            </div>
+            <button onclick="handleAuth()" class="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition">
+                CONTINUE TO SCANNER
+            </button>
+            <p class="text-xs text-gray-400 mt-4 text-center">Your details are saved locally for future check-ins.</p>
+        </div>
+    </div>
+
+    <!-- === MAIN APP SECTION === -->
+    <div id="app-section" class="max-w-xl mx-auto bg-white p-6 rounded-xl shadow-2xl hidden-section">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-2xl font-extrabold text-indigo-700">SM Check-In</h1>
+            <button onclick="logout()" class="text-xs text-red-500 hover:underline">Switch User</button>
+        </div>
+		
+        <div class="text-xs text-center mb-4 bg-gray-50 py-2 rounded">
+            Logged in as: <span id="display-user-name" class="font-bold">...</span> 
+            (<span id="display-user-id" class="text-gray-500 italic">...</span>)
+        </div>
+
+        <!-- QR Code Scanner -->
+        <div id="reader-container" class="relative bg-gray-100 p-4 rounded-lg">
+            <div id="reader"></div>
+            <div id="loading-spinner" class="absolute inset-0 flex items-center justify-center bg-gray-100/90 hidden">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+                <p class="ml-4 text-indigo-700 font-semibold">Syncing with Sheets...</p>
+            </div>
+        </div>
+
+        <div id="result-status" class="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200 text-center">
+            <p id="status-message" class="text-sm font-medium text-gray-600">Please select an action below.</p>
+        </div>
+
+        <!-- Action Buttons -->
+        <div id="main-controls" class="mt-6 flex space-x-4">
+            <button id="check-in-btn" onclick="initiateScan('IN')" class="flex-1 px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition">
+                Check-In
+            </button>
+            <button id="check-out-btn" onclick="initiateScan('OUT')" class="flex-1 px-4 py-3 bg-orange-600 text-white font-semibold rounded-lg shadow-md hover:bg-orange-700 transition">
+                Check-Out
+            </button>
+        </div>
+
+        <!-- Cancel Scan Button (Visible only during scanning) -->
+        <div id="cancel-control" class="mt-6 hidden-section">
+            <button onclick="stopScan()" class="w-full px-4 py-3 bg-red-500 text-white font-semibold rounded-lg shadow-md hover:bg-red-600 transition">
+                Cancel / Stop Scanner
+            </button>
+        </div>
+        
+        <div class="mt-4 text-center">
+            <button onclick="toggleLeaveForm()" id="leave-toggle-btn" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium py-1 px-2">Request Leave</button>
+        </div>
+
+        <div id="leave-form-container" class="mt-4 p-4 border border-gray-200 rounded-lg shadow-inner bg-gray-50 hidden-section">
+            <h2 class="text-lg font-semibold text-gray-700 mb-4">Submit Leave Request</h2>
+            <form id="leave-form">
+                <div class="mb-3">
+                    <label class="block text-sm font-medium text-gray-700">Leave Type</label>
+                    <select id="leave-type" name="type" required class="mt-1 w-full p-2 border border-gray-300 rounded-md">
+                        <option value="Annual">Annual Leave</option>
+                        <option value="Sick">Sick Leave</option>
+                        <option value="Emergency">Emergency/Unpaid</option>
+                    </select>
+                </div>
+                <div class="flex space-x-3 mb-3">
+                    <div class="flex-1">
+                        <label class="block text-sm font-medium text-gray-700">Start Date</label>
+                        <input type="date" id="leave-start-date" required class="mt-1 w-full p-2 border border-gray-300 rounded-md">
+                    </div>
+                    <div class="flex-1">
+                        <label class="block text-sm font-medium text-gray-700">End Date</label>
+                        <input type="date" id="leave-end-date" required class="mt-1 w-full p-2 border border-gray-300 rounded-md">
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700">Reason</label>
+                    <textarea id="leave-reason" rows="3" required class="mt-1 w-full p-2 border border-gray-300 rounded-md"></textarea>
+                </div>
+                <button type="submit" id="submit-leave-btn" class="w-full px-4 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700">Submit Request</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Notification Modal -->
+    <div id="custom-modal" class="modal fixed inset-0 bg-gray-900/75 flex items-center justify-center p-4 z-50 pointer-events-none opacity-0">
+        <div class="bg-white rounded-xl p-6 shadow-2xl w-full max-w-sm transform transition-all scale-95">
+            <h3 id="modal-title" class="text-xl font-bold mb-3 text-gray-800">Notification</h3>
+            <p id="modal-message" class="text-gray-600 mb-4"></p>
+            <button onclick="closeModal()" class="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium">OK</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. CONFIGURATION ---
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwZ0m8VGbs58WXTIFp-uGEv6rRtksT6aHHuIGPoxIDh47f9SDdGsnCFh66PzUY4m9o/exec";
+
+        let currentUser = null;
+        let qrScanner = null;
+        let scanning = false;
+        let currentAction = 'IN'; // Track if user is checking in or out
+
+        // --- 2. AUTHENTICATION LOGIC ---
+        const handleAuth = () => {
+            const name = document.getElementById('auth-name').value.trim();
+            const id = document.getElementById('auth-id').value.trim();
+
+            if (!name || !id) {
+                showModal('Required', 'Please enter your Full Name and Phone Number.');
+                return;
+            }
+
+            if (!/^\d+$/.test(id)) {
+                showModal('Invalid Input', 'Phone number must contain only digits.');
+                return;
+            }
+
+            currentUser = { name, id };
+            localStorage.setItem('sm_checkin_user', JSON.stringify(currentUser));
+            showApp();
+        };
+
+        const showApp = () => {
+            document.getElementById('auth-section').classList.add('hidden-section');
+            document.getElementById('app-section').classList.remove('hidden-section');
+            document.getElementById('display-user-name').textContent = currentUser.name;
+            document.getElementById('display-user-id').textContent = currentUser.id;
+        };
+
+        const logout = () => {
+            localStorage.removeItem('sm_checkin_user');
+            window.location.reload();
+        };
+
+        // --- 3. GOOGLE SHEETS SYNC ---
+        const syncToSheets = async (action, data) => {
+            try {
+                await fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action, ...data, timestamp: new Date().toISOString() })
+                });
+                return { success: true };
+            } catch (e) {
+                console.error("Sync Error:", e);
+                return { success: false, error: e.message };
+            }
+        };
+
+        // --- 4. SCANNER LOGIC ---
+        const initiateScan = (action) => {
+            currentAction = action;
+            startScan();
+        };
+
+        const startScan = () => {
+            if (scanning) return;
+            qrScanner = new Html5Qrcode("reader");
+            const config = { fps: 10, qrbox: 250 };
+
+            qrScanner.start({ facingMode: "environment" }, config, (text) => handleScanSuccess(text))
+            .then(() => {
+                scanning = true;
+                // Update UI for scanning state
+                document.getElementById('main-controls').classList.add('hidden-section');
+                document.getElementById('cancel-control').classList.remove('hidden-section');
+                setStatus(`Scanning for ${currentAction}...`, 'info');
+            }).catch(err => {
+                console.error(err);
+                setStatus('Camera Access Required', 'error');
+            });
+        };
+
+        const stopScan = async () => {
+            if (qrScanner && scanning) {
+                try {
+                    await qrScanner.stop();
+                    scanning = false;
+                    // Revert UI
+                    document.getElementById('main-controls').classList.remove('hidden-section');
+                    document.getElementById('cancel-control').classList.add('hidden-section');
+                    setStatus('Ready.', 'info');
+                } catch (e) { console.error(e); }
+            }
+        };
+
+        const handleScanSuccess = async (text) => {
+            await stopScan();
+            toggleLoading(true);
+
+            const parts = text.split('|');
+            if (parts.length < 4) {
+                toggleLoading(false);
+                showModal('Error', 'Invalid QR Format.');
+                return;
+            }
+
+            const qr = { 
+                storeId: parts[0], 
+                lat: parseFloat(parts[1]), 
+                lon: parseFloat(parts[2]), 
+                radius: parseInt(parts[3]) 
+            };
+
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                const dist = haversineDistance(pos.coords.latitude, pos.coords.longitude, qr.lat, qr.lon);
+                
+                if (dist > qr.radius) {
+                    toggleLoading(false);
+                    showModal('Out of Range', `You are ${Math.round(dist)}m away from Store ${qr.storeId}. The limit is ${qr.radius}m.`);
+                    return;
+                }
+
+                const payload = {
+                    staffId: currentUser.id,
+                    staffName: currentUser.name,
+                    storeId: qr.storeId,
+                    type: currentAction,
+                    dist: Math.round(dist)
+                };
+
+                await syncToSheets('log_entry', payload);
+                toggleLoading(false);
+                showModal('Success', `${currentAction} logged for Store ${qr.storeId} successfully.`);
+                setStatus(`${currentAction} complete at ${new Date().toLocaleTimeString()}`, 'success');
+            }, (err) => {
+                toggleLoading(false);
+                showModal('Location Error', 'Unable to retrieve location. Please ensure GPS is enabled.');
+            }, { enableHighAccuracy: true });
+        };
+
+        // --- 5. UTILS ---
+        const haversineDistance = (lat1, lon1, lat2, lon2) => {
+            const R = 6371e3;
+            const p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180;
+            const dp = (lat2 - lat1) * Math.PI / 180, dl = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        };
+
+        const setStatus = (msg, type) => {
+            const el = document.getElementById('status-message');
+            el.textContent = msg;
+            el.className = `text-sm font-medium ${type === 'error' ? 'text-red-600' : type === 'success' ? 'text-green-600' : 'text-blue-600'}`;
+        };
+
+        const showModal = (title, msg) => {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').textContent = msg;
+            const m = document.getElementById('custom-modal');
+            m.classList.remove('opacity-0', 'pointer-events-none');
+            m.querySelector('div').classList.remove('scale-95');
+        };
+
+        window.closeModal = () => {
+            const m = document.getElementById('custom-modal');
+            m.classList.add('opacity-0', 'pointer-events-none');
+            m.querySelector('div').classList.add('scale-95');
+        };
+
+        const toggleLoading = (show) => document.getElementById('loading-spinner').classList.toggle('hidden', !show);
+
+        const toggleLeaveForm = () => {
+            const el = document.getElementById('leave-form-container');
+            el.classList.toggle('hidden-section');
+        };
+
+        document.getElementById('leave-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('submit-leave-btn');
+            btn.disabled = true;
+            btn.textContent = "Submitting...";
+            
+            const payload = {
+                staffId: currentUser.id,
+                staffName: currentUser.name,
+                type: document.getElementById('leave-type').value,
+                start: document.getElementById('leave-start-date').value,
+                end: document.getElementById('leave-end-date').value,
+                reason: document.getElementById('leave-reason').value
+            };
+
+            await syncToSheets('leave_request', payload);
+            btn.disabled = false;
+            btn.textContent = "Submit Request";
+            showModal('Submitted', 'Your leave request has been sent to the database.');
+            toggleLeaveForm();
+            e.target.reset();
+        });
+
+        window.onload = () => {
+            const saved = localStorage.getItem('sm_checkin_user');
+            if (saved) {
+                currentUser = JSON.parse(saved);
+                showApp();
+            }
+        };
+    </script>
+</body>
+</html>
